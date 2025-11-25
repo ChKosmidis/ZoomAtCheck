@@ -22,7 +22,7 @@ def process_files(df_signup, df_attendance, threshold_minutes):
     att_name_col = df_attendance.columns[0]
     att_dur_col = df_attendance.columns[1]
 
-    # Поиск колонок
+    # Поиск колонок (на случай если названия отличаются)
     for col in df_attendance.columns:
         if "Имя" in col: att_name_col = col
         if "Длительность" in col: att_dur_col = col
@@ -90,19 +90,24 @@ def process_files(df_signup, df_attendance, threshold_minutes):
             df_attendance.at[idx, 'normalized_name'] = missing_signup_map[matched_key]
 
     # --- РАСЧЕТ СТАТИСТИКИ ---
+    # Группируем и суммируем время
     duration_stats = df_attendance.groupby('normalized_name')[att_dur_col].sum().reset_index()
     
-    present_names = set(duration_stats['normalized_name'])
+    # Сортируем полную таблицу по убыванию времени
+    duration_stats = duration_stats.sort_values(by=att_dur_col, ascending=False)
+    duration_stats.columns = ['Имя участника', 'Всего минут'] # Красивые заголовки
+
+    present_names = set(duration_stats['Имя участника'])
     all_signup = set(signup_names)
     
     # Список 1: Не были
     not_present = sorted(list(all_signup - present_names))
     
     # Список 2: Были меньше threshold_minutes
-    under_threshold = duration_stats[duration_stats[att_dur_col] < threshold_minutes].sort_values('normalized_name')
-    under_threshold_list = under_threshold[['normalized_name', att_dur_col]].values.tolist()
+    under_threshold = duration_stats[duration_stats['Всего минут'] < threshold_minutes].sort_values('Имя участника')
+    under_threshold_list = under_threshold.values.tolist()
 
-    return not_present, under_threshold_list, df_attendance
+    return not_present, under_threshold_list, df_attendance, duration_stats
 
 # --- ИНТЕРФЕЙС ---
 
@@ -116,7 +121,6 @@ with st.container():
     col_opt, col_val = st.columns([1, 2])
     
     with col_opt:
-        # Радиокнопки для выбора режима
         time_mode = st.radio(
             "Минимальное время присутствия:",
             options=["90 минут", "60 минут", "Другое"],
@@ -124,10 +128,9 @@ with st.container():
         )
     
     with col_val:
-        # Определение итогового значения threshold
         if time_mode == "90 минут":
             threshold = 90
-            st.info(f"Выбран порог: **{threshold} мин**")
+            st.info(f"Выбран стандартный порог: **{threshold} мин**")
         elif time_mode == "60 минут":
             threshold = 60
             st.info(f"Выбран порог: **{threshold} мин**")
@@ -150,7 +153,7 @@ if file_signup and file_attendance:
     st.divider()
     
     try:
-        # Чтение с авто-определением разделителя
+        # Чтение файлов
         try:
             df_s = pd.read_csv(file_signup)
             if df_s.shape[1] < 1: df_s = pd.read_csv(file_signup, sep=';')
@@ -163,15 +166,16 @@ if file_signup and file_attendance:
         except:
              st.error("Ошибка чтения файла посещаемости.")
 
-        # Обработка с учетом выбранного threshold
-        not_present, under_threshold, df_debug = process_files(df_s, df_a, threshold)
+        # Обработка
+        not_present, under_threshold, df_debug, df_stats = process_files(df_s, df_a, threshold)
         
         st.success("Готово! Результаты ниже.")
         
+        # --- БЛОК 1: СПИСКИ "ПРОБЛЕМНЫХ" ---
         res_col1, res_col2 = st.columns(2)
         
         with res_col1:
-            st.subheader(f"🔴 Записались, но не пришли ({len(not_present)})")
+            st.subheader(f"🔴 Не пришли ({len(not_present)})")
             df_not = pd.DataFrame(not_present, columns=["Имя"])
             st.dataframe(df_not, use_container_width=True, height=400)
             
@@ -193,9 +197,29 @@ if file_signup and file_attendance:
                 file_name=f"менее_{threshold}_минут.csv",
                 mime="text/csv"
             )
-            
-        with st.expander("🔎 Детали сопоставления имен"):
+        
+        st.divider()
+
+        # --- БЛОК 2: ПОЛНАЯ ТАБЛИЦА ---
+        st.subheader("📋 Полная статистика по всем участникам")
+        st.write("Суммарное время для каждого идентифицированного участника.")
+        
+        st.dataframe(df_stats, use_container_width=True)
+        
+        st.download_button(
+            "Скачать полную статистику (.csv)",
+            data=df_stats.to_csv(index=False).encode('utf-8'),
+            file_name="полная_статистика_посещаемости.csv",
+            mime="text/csv",
+            type="primary" # Выделяем кнопку цветом
+        )
+
+        st.divider()
+
+        # --- БЛОК 3: ОТЛАДКА ---
+        with st.expander("🔎 Детали сопоставления (сырые данные)"):
+             st.write("Слева - имя из отчета Zoom, Справа - найденное имя в списке записи.")
              st.dataframe(df_debug[['Имя (первоначальное имя)', 'normalized_name', df_debug.columns[1]]].dropna())
 
     except Exception as e:
-        st.error(f"Ошибка: {e}")
+        st.error(f"Ошибка при обработке: {e}")
