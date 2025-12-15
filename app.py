@@ -113,7 +113,7 @@ def process_files(df_signup, df_attendance, threshold_minutes):
 
 st.set_page_config(page_title="Анализ посещаемости", layout="wide")
 
-st.title("📊 Сверка посещаемости вебинара")
+st.title("📊 Сверка посещаемости Zoom")
 
 # Блок настроек
 with st.container():
