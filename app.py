@@ -45,6 +45,9 @@ def process_files(df_signup, df_attendance, threshold_minutes):
     # --- ЭТАП 1: Точный поиск и токены ---
     for idx, row in df_attendance.iterrows():
         att_name_raw = row[att_name_col]
+        # Убираем суффикс "| ШЕБ", чтобы он не мешал сопоставлению
+        if isinstance(att_name_raw, str):
+            att_name_raw = att_name_raw.replace('| ШЕБ', '').replace('| шеб', '')
         att_tokens = get_tokens(att_name_raw)
         
         best_match = None
@@ -56,16 +59,22 @@ def process_files(df_signup, df_attendance, threshold_minutes):
                 continue
             
             common = s_tokens.intersection(att_tokens)
-            score = len(common)
+            base_score = len(common)
+            
+            # Добавляем бонус за полное совпадение набора слов
+            # Это позволяет отличить "Anna" от "Anna Smith" при наличии обоих
+            is_exact_match = (s_tokens == att_tokens)
+            final_score = base_score + 0.5 if is_exact_match else base_score
+
             is_subset = s_tokens.issubset(att_tokens) or att_tokens.issubset(s_tokens)
             
-            if score >= 2:
-                if score > best_score:
-                    best_score = score
+            if base_score >= 2:
+                if final_score > best_score:
+                    best_score = final_score
                     best_match = spec['original']
-            elif score == 1 and is_subset and (len(s_tokens) == 1 or len(att_tokens) == 1):
-                 if score > best_score:
-                    best_score = score
+            elif base_score == 1 and is_subset and (len(s_tokens) == 1 or len(att_tokens) == 1):
+                 if final_score > best_score:
+                    best_score = final_score
                     best_match = spec['original']
 
         if best_match:
@@ -82,6 +91,8 @@ def process_files(df_signup, df_attendance, threshold_minutes):
     
     for idx in unmatched_indices:
         att_raw = df_attendance.at[idx, att_name_col]
+        if isinstance(att_raw, str):
+            att_raw = att_raw.replace('| ШЕБ', '').replace('| шеб', '')
         att_clean = strict_clean(att_raw)
         matches = difflib.get_close_matches(att_clean, missing_keys, n=1, cutoff=0.6)
         
